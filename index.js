@@ -632,7 +632,7 @@ player.use( async function( ctx, next ) {
   else
     ctx.options.playlist_history = [ media ];
 
-  if( opts.metadata && media.contentType.startsWith( "audio" ) ){
+  if( opts.metadata && media.contentType && media.contentType.startsWith( "audio" ) ){
     await getMetadata( media )
     .then( () => {
       if( media.audioMetadata ) {
