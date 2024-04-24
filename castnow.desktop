@@ -1,0 +1,20 @@
+[Desktop Entry]
+Comment[en_US]=
+Comment=
+Exec=node -i /usr/local/lib/node_modules/castnow/index.js --address 192.168.1.123 "%U"
+GenericName[en_US]=
+GenericName=
+Icon=
+MimeType=
+Name=Cast Now
+NoDisplay=false
+OnlyShowIn=KDE;
+Path=
+StartupNotify=true
+Terminal=true
+TerminalOptions=
+Type=Application
+X-DBUS-ServiceName=
+X-DBUS-StartupType=
+X-KDE-SubstituteUID=false
+X-KDE-Username=
