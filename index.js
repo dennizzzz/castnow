@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const PLAYLIST_LIMIT = 100; // Prevent node_modules/strtok3/lib/ReadStreamTokenizer.js:83: throw new Error(type_1.endOfFile);
 
 var fs = require('fs');
 var path = require('path');
@@ -42,8 +43,8 @@ var optConfig = {
     showcover: true
   }
 }
-var args = rcOpts.concat(process.argv.slice(2));
-var opts = require('minimist')(args, optConfig);
+
+var opts = require('minimist')(rcOpts.concat(process.argv.slice(2)), optConfig);
 
 // Eliminate duplicate option values, prefering the final option value.
 for (var opt in opts) {
@@ -212,7 +213,7 @@ function pictureToConsole( image, bottom ) {
 }
 
 // Limit image data to fit arbitrary protobuffer size of 64k.
-const maxSize = 32000;
+const MAX_IMAGE_SIZE = 32000;
 
 // Extract image and reduce until it fits the buffer size.
 async function processImage( data ) {
@@ -221,7 +222,7 @@ async function processImage( data ) {
   .metadata()
   .then( metadata => {
     const resize = {
-      execute: size > maxSize || metadata.height > 512 || metadata.width > 512,
+      execute: size > MAX_IMAGE_SIZE || metadata.height > 512 || metadata.width > 512,
       i: 0,
       fit: "inside",
       height: Math.min( 512, metadata.height ),
@@ -249,7 +250,7 @@ async function processImage( data ) {
       resize.height -= 16;
       resize.width -= 16;
       resize.size = result.remote.length;
-    } while( resize.size > maxSize && resize.i++ < 32 )
+    } while( resize.size > MAX_IMAGE_SIZE && resize.i++ < 32 )
     return result;
   } )
 }
@@ -269,12 +270,12 @@ function getMetadata( media ) {
       mm.parseStream( stream ).then( async metadata => {
         media.audioMetadata = metadata;
         const mc = metadata.common;
-        media.metadata = {
-          metadataType: 3,
-          albumName: mc.album,
-          artist: mc.artist,
-          title: mc.title
-        }
+        media.metadata = media.metadata || {}
+        media.metadata.metadataType =  3;
+        media.metadata.albumName = media.metadata.albumName || mc.album;
+        media.metadata.artist = media.metadata.artist || mc.artist;
+        media.metadata.title = media.metadata.title || mc.title;
+
         if ( Array.isArray( mc.picture ) && mc.picture[0] ) {
           await processImage( mc.picture[ 0 ].data ).then( result => {
             mc.picture[ 0 ].data = result.local;
@@ -285,6 +286,10 @@ function getMetadata( media ) {
       } )
     } )
   } )
+}
+
+function getMedia( media ) {
+   return { media: _.pick( media, [ "contentId", "contentUrl", "contentType", "metadata" ] ) };
 }
 
 var last = function(fn, l) {
@@ -384,12 +389,29 @@ var ctrl = function(err, p, ctx) {
   var nextInPlaylist = function() {
     if (ctx.mode !== 'launch') return;
     if (!playlist.length) return process.exit();
+
+    var current = p.currentSession.media;
+    var media = playlist[ 0 ];
+    if( current && media && current.contentUrl == media.contentUrl && media.metadata && media.metadata.index ) {
+      playlist.shift();
+      p.load( getMedia( media ), function( err, status ) {
+        if( !err ) {
+          p.seek( media.metadata.index );
+        }
+      } );
+      if( ctx.options.loop )
+        playlist.push( media );
+      else
+        playlist_history.push( media );
+      return;
+    }
+
     p.stop( async function() {
       ui.showLabels('state');
       const media = playlist.shift();
       debug( 'loading next in playlist: %o', media );
       await pictureToConsole( getPicture( media ), 3 );
-      p.load( { media: _.pick( media, "contentId", "contentUrl", "contentType", "metadata" ) }, noop );
+      p.load( getMedia( media ), noop );
 
       if (ctx.options.loop)
         playlist.push( media );
@@ -496,14 +518,10 @@ var ctrl = function(err, p, ctx) {
     },
 
     // next media in playlist
-    n: function() {
-      nextInPlaylist();
-    },
+    n: nextInPlaylist,
 
     // previous media in playlist
-    p: function() {
-      previousInPlaylist();
-    },
+    p: previousInPlaylist,
 
     // stop playback
     s: function() {
@@ -593,30 +611,266 @@ player.use(localfile);
 player.use(transcode);
 player.use(subtitles);
 
-player.use( function( ctx, next ) {
+player.use( async function( ctx, next ) {
   if( ctx.mode !== 'launch' ) return next();
-  if( ctx.options.type ) {
-    // If a --type has been provided, then force it.
-    ctx.options.playlist.map( function( media ) {
-       media.type = ctx.options.type;
-       media.contentType = ctx.options.type;
-     } );
-  }
-  else {
-    ctx.options.playlist.map( function( media ){
-      if( !media.type ) {
-        // These will be URLs (the MIME type for medias is filled in by the localfile plugin).
-        var mimeType = mime.lookup( media.contentUrl );
-        var type = mimeType.split('/')[0];
-        if( type === 'audio' || type === 'video' ) {
-          media.type = mimeType;
-          media.contentType = mimeType;
+
+  const getList = function( media, type, subType, extension ) {
+    return new Promise( ( resolve, reject ) => {
+      getUri( encodeURI( decodeURIComponent( media.contentUrl ) ), {}, ( err, stream ) => {
+        const _parseFile = function( f ) {
+          var parts = f.split( "/" );
+          var urlParts = media.contentUrl.split( "/" );
+          var lastPathPart = urlParts[ urlParts.length - 2 ];
+          var i = f.lastIndexOf( lastPathPart );
+          if( -1 !== i ) {
+            f = media.contentUrl.substring( 0, media.contentUrl.lastIndexOf( lastPathPart ) ) + parts[ parts.length - 1 ];
+          }
+          else {
+            f = media.contentUrl.substring( 0, media.contentUrl.lastIndexOf( "/" ) ) + "/" + f;
+          }
+          return f;
         }
-      }
-    });
+
+        media.contentUrl = decodeURIComponent( media.contentUrl );
+        var chunk;
+        var type;
+        var data = "";
+        var chunkSize = 4096;
+        var tracks = [];
+        var track = {};
+        stream.setEncoding( "utf8" );
+        stream.on( "readable", function() {
+          while( ( chunk = stream.read( chunkSize ) ) != null ) {
+            if( !data ) {
+              type = type || -1 !== chunk.indexOf( "#EXTM3U" ) && "M3U";
+              type = type || -1 !== chunk.indexOf( "[playlist]" ) && "PLS";
+              type = type || -1 !== chunk.indexOf( "FILE" ) && -1 !== chunk.indexOf( "TRACK" ) && -1 !== chunk.indexOf( "INDEX" ) && "CUE"
+              type = type || -1 !== chunk.toLowerCase().indexOf( "html" ) && "HTML";
+              if( type ) {
+                chunkSize = undefined;
+              }
+              else {
+                stream.destroy();
+                return;
+              }
+            }
+            data += chunk;
+
+            switch( type ) {
+            case "CUE":
+              const _dequote = function( s ) {
+                return s.replace( /^["'`](.*)[`'"]$/, "$1" );
+              }
+
+              const _parse = function( element ) {
+                element.split( '\n' ).forEach( _line => {
+                  _line = _line.trim();
+                  var i = _line.indexOf( " " );
+                  var key = _line.substring( 0, i );
+                  _line = _line.substring( i + 1 )
+
+                  if( -1 !== i ) {
+                    switch( key ) {
+                    case "FILE":
+                      track[ key ] = _parseFile( _dequote( _line.substring( 0, _line.lastIndexOf( " " ) ) ) );
+                      break;
+                    case "TRACK":
+                      track[ key ] = _line.substring( 0, _line.lastIndexOf( " " ) );
+                      break;
+                    case "INDEX":
+                      track[ key ] = _line.substring( _line.lastIndexOf( " " ) + 1 ).split( ":" ).map( Number ).reduce( function( r, v, i ) {
+                        return i < 2 ? r * 60 + v : r + v / 100
+                      }, 0 );
+                      break
+                    case "PERFORMER":
+                    case "TITLE":
+                      track[ key ] = _dequote( _line );
+                      break
+                    }
+                  }
+                } )
+                return Object.assign( {}, track );
+              }
+
+              var files = data.split( "FILE" );
+              var header = _parse( files.shift() );
+              if( 1 === files.length  ) {
+                var file = "FILE" + files[ 0 ];
+                media.single = true;
+                track[ "ALBUM" ] = track[ "TITLE" ];
+                tracks = file.split( "TRACK" ).map( ( _t, i ) => { return _parse( ( 0 === i ? "" : "TRACK" ) + _t ) } );
+                tracks.shift();
+              }
+              else {
+                tracks = files.map( _f => { return _parse( "FILE" + _f ) } );
+              }
+              break;
+
+            case "HTML":
+              var links = [];
+              var lastLink;
+              ( data.match( /<[aA].*?<\/[aA]>/g ) || [] ).forEach( _l => {
+                var i = _l.indexOf( "href" );
+                if( -1 === i ) {
+                  i = _l.indexOf( "HREF" );
+                }
+                if( -1 === i ) {
+                  return;
+                }
+                lastLink = _l;
+                _l = _l.substring( i + 5 );
+                _l = _l.substring( 1, _l.indexOf( _l.charAt( 0 ), 1 ) );
+                if( _l.length > 4 && !_l.endsWith( "/" ) ) {
+                  links.push( media.contentUrl + "/" + decodeURIComponent( _l ) );
+                }
+              } );
+              var i = data.lastIndexOf( lastLink );
+              if( lastLink && -1 !== i ) {
+                data = data.substring( i + lastLink.length );
+              }
+              links.forEach( _l => {
+                tracks.push( { "FILE": _l } );
+              } );
+              break;
+
+            case "M3U":
+              tracks = data.split( "#EXTINF:" ).map( ( _l, i ) => {
+                if( 0 === i ) {
+                  return undefined;
+                }
+                const _lines = _l.split( "\n" );
+                const _info = _lines[ 0 ].replace( /(\d+),(.+?) - (.+?)/, "$1\n$2\n$3" ).split( "\n" );
+
+                return {
+                  "DURATION": _info[ 0 ],
+                  "FILE": _parseFile( decodeURIComponent( _lines[ 1 ] ) ),
+                  "PERFORMER": _info[ 1 ],
+                  "TITLE": _info[ 2 ]
+                }
+              } ).filter( e => e );
+              break;
+
+            case "PLS":
+              tracks = [];
+              const getTrack = function( i ) {
+                return tracks[ i ] = tracks[ i ] || {};
+              }
+
+              const keys = {
+                "File": { key: "FILE", f: function( f ) { return _parseFile( decodeURIComponent( f ) ) } },
+                "Length": { key: "DURATION" },
+                "Title": { key: "TITLE" }
+              }
+
+              data.split( /\r+\n/ ).forEach( ( _l, i ) => {
+                for( key in keys ) {
+                  if( 0 === _l.indexOf( key ) ) {
+                    const t = keys[ key ];
+                    const _info = _l.replace( /.+?(\d+)=(.+?)/, "$1\n$2" ).split( "\n" );
+                    getTrack( +_info[ 0 ] )[ t.key ] =  t.f ? t.f( _info[ 1 ] ) : _info[ 1 ];
+                  }
+                }
+              } );
+              tracks.shift( 0 );
+
+              var titles = tracks.map( function( track ) { return track.TITLE } ).sort();
+              var t1 = titles[ 0 ]
+              var t2 = titles[ titles.length - 1 ]
+              for( var i = 0, len = t1.length; i < len && t1.charAt( i ) === t2.charAt( i ); ++i );
+
+              const work = t1.substring( 0, i );
+              if( work.length > 3 ) {
+                const performer = work.endsWith( " - " ) ? work.substring( 0, -3 ) : work;
+                tracks.forEach( function( track ) {
+                  track.TITLE = track.TITLE.substring( work.length );
+                  track.PERFORMER = performer;
+                } );
+              }
+
+              break;
+            }
+          }
+        } );
+
+        stream.on( "end", function() {
+          switch( type ) {
+            case "CUE":
+            case "HTML":
+            case "M3U":
+            case "PLS":
+              media.tracks = tracks;
+          }
+          return resolve( media );
+        } );
+      } )
+    } )
   }
+
+  for( var i = 0; i < ctx.options.playlist.length; ++i ) {
+    var media = ctx.options.playlist[ i ];
+    var cu = media.contentUrl;
+
+    if( cu.lastIndexOf( "/" ) > cu.lastIndexOf( "." ) ) {
+      media.type = "application/octet-stream";
+    }
+
+    var extension = /(?:\.([^.]+))?$/.exec( cu )[ 1 ];
+
+    // These will be URLs (the MIME type for medias is filled in by the localfile plugin).
+    media.type = media.type || mime.lookup( "file." + extension );
+    media.contentType = media.type;
+
+    var mimeType = media.type.split('/');
+    var type = mimeType[0];
+    var subType = mimeType[1];
+
+    if( [ "audio", "video" ].includes( type ) && ![ "m3u", "m3u8", "pls" ].includes( extension ) ) {
+      continue;
+    }
+
+    if( media.sub ) {
+      ctx.options.playlist.splice( i, 1 );
+      --i;
+      continue;
+    }
+
+    const result = await getList( media, type, subType, extension );
+    if( result.tracks ) {
+      Array.prototype.splice.apply( ctx.options.playlist, [ i, 1 ].concat( result.tracks.map( _m => {
+        var _uri = encodeURI( _m.FILE );
+        var _r = {
+          path: _uri,
+          contentUrl: _uri,
+          metadata: {
+            albumName: _m.ALBUM,
+            artist: _m.PERFORMER,
+            index: _m.INDEX,
+            metadataType: 3,
+            title: _m.TITLE
+          },
+          sub: true
+        }
+        return _r;
+      } ) ) );
+      --i;
+    }
+  }
+
+  // If a --type has been provided, then force it.
+  ctx.options.playlist.forEach( ctx.options.type ? function( media ) {
+    media.type = ctx.options.type;
+    media.contentType = ctx.options.type;
+  } : function( media ) {
+  } );
+
+  if( PLAYLIST_LIMIT < ctx.options.playlist.length )  {
+    console.log( "Playlist truncated from " + ctx.options.playlist.length + " to " + PLAYLIST_LIMIT );
+    ctx.options.playlist.length = PLAYLIST_LIMIT;
+  }
+
   next()
 });
+
 
 player.use( async function( ctx, next ) {
   if( ctx.mode !== 'launch' ) return next();
@@ -632,11 +886,11 @@ player.use( async function( ctx, next ) {
   else
     ctx.options.playlist_history = [ media ];
 
-  if( opts.metadata && media.contentType && media.contentType.startsWith( "audio" ) ){
+  if( opts.metadata && media && media.contentType && media.contentType.startsWith( "audio" ) ){
     await getMetadata( media )
     .then( () => {
       if( media.audioMetadata ) {
-        ctx.options.media = _.pick( media, "contentId", "contentUrl", "contentType", "metadata" );
+        Object.assign( ctx.options, getMedia( media ) ); // Don't log everything.
         if( opts.showmetadata ) {
           console.log( media.audioMetadata );
         }

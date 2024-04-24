@@ -7,10 +7,16 @@ your Chromecast-enabled device. It supports playback of any
 videos on the web and torrents. If no media is passed as a parameter, castnow
 will re-attach to a running playback session.
 
-This version of castnow almost fixes the glaring omission of the Chromecast not
-using the metadata and cover art present in music files to display. The almost
-part being to only use a tiny version of the cover art to fit in the arbitrary
-maximum message size of 64k.
+This version of castnow:
+
+- Almost fixes the glaring omission of the Chromecast not using the metadata
+and cover art present in music files to display. The almost part being to only
+use a tiny version of the cover art to fit in the arbitrary maximum message
+size of 64k.
+
+- Supports playlist parsing. Common basic formats (CUE/M3U/PLS) are supported
+and as a bonus HTML files are parsed for content as well. CUE format INDEX
+is also supported for single CD files, but only for selecting tracks.
 
 Tested:
 
@@ -26,10 +32,10 @@ it to work though.
 
 ### Interested in being a castnow maintainer?
 
-I currently don't have that much time to maintain this project and have also
-lost some interest (to be honest). Main reason is that we have had a new TV for
-a few months that supports casting directly to it using DLNA \(you may wanna
-checkout [dlnacast](https://github.com/xat/dlnacast)). Feel free to contact me
+Simon doesn't have that much time to maintain this project and also has lost
+some interest (to be honest). Main reason is that he got a new TV that supports
+casting directly to it using DLNA \(you may wanna checkout
+[dlnacast](https://github.com/xat/dlnacast)). Feel free to contact him
 \( [simon@sope.io](simon@sope.io) ) if you want to be added as a maintainer to
 castnow.
 
@@ -294,21 +300,20 @@ in the current user's home directory. For example:
 ```
 
 ### Player Controls
+| Key                  | Action                                                        |
+| -------------------: | :------------------------------------------------------------ |
+| <kbd>**Space**</kbd> | Toggle between play and pause                                 |
+| <kbd>**m**</kbd>     | Toggle mute                                                   |
+| <kbd>**t**</kbd>     | Toggle subtitles                                              |
+| <kbd>**Up**</kbd>    | Volume up                                                     |
+| <kbd>**Down**</kbd>  | Volume down                                                   |
+| <kbd>**Left**</kbd>  | Seek backward (keep pressed / multiple press for faster seek) |
+| <kbd>**Right**</kbd> | Seek forward (keep pressed / multiple press for faster seek)  |
+| <kbd>**p**</kbd>     | Previous item in the playlist (only supported in launch-mode) |
+| <kbd>**n**</kbd>     | Next item in the playlist (only supported in launch-mode)     |
+| <kbd>**s**</kbd>     | Stop playback                                                 |
+| <kbd>**q**</kbd>     | Quit                                                          |
 
-```
-
-space   // toggle between play and pause
-m       // toggle mute
-t       // toggle subtitles
-up      // volume up
-down    // volume down
-left    // seek backward (keep pressed / multiple press for faster seek)
-right   // seek forward (keep pressed / multiple press for faster seek)
-n       // next item in the playlist (only supported in launch-mode)
-s       // stop playback
-q       // quit
-
-```
 
 ### YouTube Support
 
@@ -387,6 +392,7 @@ Please only report metadata-related issues here and general issues there.
 
 ### contributors
 
+* [dennizzzz](https://github.com/dennizzzz)
 * [tooryx](https://github.com/tooryx)
 * [przemyslawpluta](https://github.com/przemyslawpluta)
 
