@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const DEFAULT_MIME = "application/octet-stream";
 const PLAYLIST_LIMIT = 100; // Prevent node_modules/strtok3/lib/ReadStreamTokenizer.js:83: throw new Error(type_1.endOfFile);
 
 var fs = require('fs');
@@ -811,7 +812,7 @@ player.use( async function( ctx, next ) {
     var cu = media.contentUrl;
 
     if( cu.lastIndexOf( "/" ) > cu.lastIndexOf( "." ) ) {
-      media.type = "application/octet-stream";
+      media.type = DEFAULT_MIME;
     }
 
     var extension = /(?:\.([^.]+))?$/.exec( cu )[ 1 ];
@@ -819,6 +820,10 @@ player.use( async function( ctx, next ) {
     // These will be URLs (the MIME type for medias is filled in by the localfile plugin).
     media.type = media.type || mime.lookup( "file." + extension );
     media.contentType = media.type;
+
+    if( DEFAULT_MIME === media.type ) {
+      continue;
+    }
 
     var mimeType = media.type.split('/');
     var type = mimeType[0];
