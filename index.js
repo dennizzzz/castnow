@@ -17,7 +17,8 @@ var mime = require('mime');
 var btoa = require( "btoa" );
 var getUri = require( "get-uri" );
 var _ = require( "lodash" );
-var mm = require( "music-metadata" );
+var mm;
+const { loadMusicMetadata } = require('music-metadata');
 var sharp = require( "sharp" );
 var noop = function() {};
 
@@ -268,23 +269,37 @@ function getMetadata( media ) {
       if ( err ) {
         return reject( err );
       };
-      mm.parseStream( stream ).then( async metadata => {
-        media.audioMetadata = metadata;
-        const mc = metadata.common;
-        media.metadata = media.metadata || {}
-        media.metadata.metadataType =  3;
-        media.metadata.albumName = media.metadata.albumName || mc.album;
-        media.metadata.artist = media.metadata.artist || mc.artist;
-        media.metadata.title = media.metadata.title || mc.title;
 
-        if ( Array.isArray( mc.picture ) && mc.picture[0] ) {
-          await processImage( mc.picture[ 0 ].data ).then( result => {
-            mc.picture[ 0 ].data = result.local;
-            media.metadata.images = [ { url: result.remote } ];
-          } );
-        }
-        return resolve( media );
-      } )
+      const _parse = function() {
+        mm.parseStream( stream ).then( async metadata => {
+          media.audioMetadata = metadata;
+          const mc = metadata.common;
+          media.metadata = media.metadata || {}
+          media.metadata.metadataType =  3;
+          media.metadata.albumName = media.metadata.albumName || mc.album;
+          media.metadata.artist = media.metadata.artist || mc.artist;
+          media.metadata.title = media.metadata.title || mc.title;
+
+          if ( Array.isArray( mc.picture ) && mc.picture[0] ) {
+            await processImage( mc.picture[ 0 ].data ).then( result => {
+              mc.picture[ 0 ].data = result.local;
+              media.metadata.images = [ { url: result.remote } ];
+            } );
+          }
+          return resolve( media );
+        } )
+      }
+
+      if( mm ) {
+        return _parse();
+      }
+      else {
+        // Dynamically loads the ESM module in a CommonJS project
+        loadMusicMetadata().then( ( _mm ) => {
+          mm = _mm;
+          return _parse();
+        } );
+      }
     } )
   } )
 }
